@@ -1,4 +1,5 @@
 import { getPool } from '../../config/db.js';
+import { interpolateWhatsAppMessage, buildClickToChatUrl, DEFAULT_MESSAGE_TEMPLATE } from '../whatsapp/whatsapp.service.js';
 
 export async function findPublishedCourses(filters = {}, userId = null) {
   const pool = getPool();
@@ -214,6 +215,7 @@ export async function findCourseBySlug(slug, userId = null) {
       co.is_featured, co.is_new, co.is_trending, co.display_order, co.status,
       co.total_views, co.unique_visitors, co.enquiry_count, co.demo_request_count,
       co.wishlist_count, co.share_count, co.enrollment_count, co.rating_avg, co.rating_count,
+      co.whatsapp_contact_id, co.whatsapp_enabled,
       co.published_at, co.created_at, co.updated_at,
       c.id AS cat_id, c.name AS cat_name, c.slug AS cat_slug, c.status AS cat_status,
       sc.id AS sub_id, sc.name AS sub_name, sc.slug AS sub_slug, sc.status AS sub_status,
@@ -368,6 +370,49 @@ export async function findCourseBySlug(slug, userId = null) {
 
   const hasOffer = finalOfferPrice !== null && finalOfferPrice < priceNum;
   const discountPercentage = hasOffer ? Math.round(((priceNum - finalOfferPrice) / priceNum) * 100) : 0;
+
+  // Resolve active WhatsApp contact
+  let whatsappInfo = { available: false };
+  if (Boolean(course.whatsapp_enabled)) {
+    let contact = null;
+    if (course.whatsapp_contact_id) {
+      const [waRows] = await pool.query(
+        'SELECT * FROM whatsapp_contacts WHERE id = ? AND is_active = 1 AND deleted_at IS NULL LIMIT 1',
+        [course.whatsapp_contact_id]
+      );
+      if (waRows.length > 0) {
+        contact = waRows[0];
+      }
+    }
+
+    if (!contact) {
+      const [defRows] = await pool.query(
+        'SELECT * FROM whatsapp_contacts WHERE is_default = 1 AND is_active = 1 AND deleted_at IS NULL LIMIT 1'
+      );
+      if (defRows.length > 0) {
+        contact = defRows[0];
+      }
+    }
+
+    if (contact) {
+      const message = interpolateWhatsAppMessage(
+        contact.custom_message_template || DEFAULT_MESSAGE_TEMPLATE,
+        {
+          courseName: course.course_name,
+          courseCode: course.course_code,
+          courseUrl: `https://softmaxs.com/courses/${course.slug}`,
+        }
+      );
+      const clickToChatUrl = buildClickToChatUrl(contact.normalized_phone, message);
+      whatsappInfo = {
+        available: true,
+        display_name: contact.display_name,
+        department: contact.department,
+        click_to_chat_url: clickToChatUrl,
+        prefilled_message: message,
+      };
+    }
+  }
 
   // Format full response adhering to Section 9.2
   return {
@@ -547,6 +592,7 @@ export async function findCourseBySlug(slug, userId = null) {
       robots_directive: course.robots_directive || 'index, follow',
       schema_type: course.schema_type || 'Course',
     },
+    whatsapp: whatsappInfo,
     user_state: {
       wishlisted: Boolean(course.is_wishlisted),
       enrolled: Boolean(course.is_enrolled),
@@ -833,6 +879,8 @@ export async function findCourseByIdAdmin(id) {
     rating_avg: Number(course.rating_avg),
     rating_count: Number(course.rating_count),
     gallery_images: typeof course.gallery_images === 'string' ? JSON.parse(course.gallery_images) : (course.gallery_images || []),
+    whatsapp_contact_id: course.whatsapp_contact_id ? Number(course.whatsapp_contact_id) : null,
+    whatsapp_enabled: Boolean(course.whatsapp_enabled),
     tags,
     what_you_will_learn: whatYouWillLearn,
     tools_covered: toolsCovered,
@@ -882,6 +930,7 @@ export async function createCourse(data) {
         gallery_images, price, offer_price, currency, tax_inclusive,
         gst_percentage, is_free, refund_policy, refund_days,
         is_featured, is_new, is_trending, display_order, status,
+        whatsapp_contact_id, whatsapp_enabled,
         created_by, updated_by
       ) VALUES (
         ?, ?, ?, ?, ?,
@@ -891,6 +940,7 @@ export async function createCourse(data) {
         ?, ?, ?, ?, ?,
         ?, ?, ?, ?,
         ?, ?, ?, ?, 'draft',
+        ?, ?,
         ?, ?
       )
     `, [
@@ -927,6 +977,8 @@ export async function createCourse(data) {
       data.is_new ? 1 : 0,
       data.is_trending ? 1 : 0,
       data.display_order || 0,
+      data.whatsapp_contact_id || null,
+      data.whatsapp_enabled !== undefined ? (data.whatsapp_enabled ? 1 : 0) : 1,
       data.created_by || null,
       data.created_by || null,
     ]);
@@ -986,13 +1038,19 @@ export async function updateCourse(id, data) {
       'intro_video_url', 'demo_video_url', 'alt_text', 'brochure_url', 'syllabus_url',
       'price', 'offer_price', 'currency', 'tax_inclusive', 'gst_percentage',
       'is_free', 'refund_policy', 'refund_days', 'is_featured', 'is_new',
-      'is_trending', 'display_order', 'updated_by'
+      'is_trending', 'display_order', 'whatsapp_contact_id', 'whatsapp_enabled', 'updated_by'
     ];
 
     for (const col of allowedCols) {
       if (data[col] !== undefined) {
         fields.push(`${col} = ?`);
-        params.push(data[col]);
+        if (col === 'whatsapp_enabled') {
+          params.push(data[col] ? 1 : 0);
+        } else if (col === 'whatsapp_contact_id') {
+          params.push(data[col] ? Number(data[col]) : null);
+        } else {
+          params.push(data[col]);
+        }
       }
     }
 

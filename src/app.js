@@ -62,6 +62,11 @@ import {
   analyticsAdminCourseRoutes,
   analyticsAdminGeneralRoutes,
 } from './modules/analytics/analytics.routes.js';
+import { counsellorAdminRoutes } from './modules/counsellors/counsellor-admin.routes.js';
+import instructorPortalRoutes from './modules/instructor-portal/instructor-portal.routes.js';
+import { publicContactRouter, adminContactRouter } from './modules/contact/contact.routes.js';
+import { notificationPublicRouter, notificationAdminRouter } from './modules/notifications/notification.routes.js';
+import { adminWhatsAppRouter } from './modules/whatsapp/whatsapp.routes.js';
 
 
 const app = express();
@@ -104,6 +109,11 @@ app.use('/api/courses', analyticsTrackRoutes);
 app.use('/api/courses', coursePublicRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/instructors', instructorPublicRoutes);
+app.use('/api/contact', publicContactRouter);
+app.use('/api/notifications', notificationPublicRouter);
+
+// Instructor Portal APIs
+app.use('/api/instructor', instructorPortalRoutes);
 
 // Student Me APIs
 app.use('/api/me', demoStudentRoutes);
@@ -132,6 +142,10 @@ app.use('/api/admin/lessons', lessonAdminRoutes);
 app.use('/api/admin/batches', batchAdminRoutes);
 app.use('/api/admin/materials', materialAdminRoutes);
 app.use('/api/admin/instructors', instructorAdminRoutes);
+app.use('/api/admin/contacts', adminContactRouter);
+app.use('/api/admin/notifications', notificationAdminRouter);
+app.use('/api/admin/whatsapp', adminWhatsAppRouter);
+app.use('/api/admin/users/counsellors', counsellorAdminRoutes);
 app.use('/api/admin', analyticsAdminGeneralRoutes);
 
 

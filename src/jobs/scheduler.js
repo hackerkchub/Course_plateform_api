@@ -8,6 +8,7 @@ import { runDemoReminderJob } from './demoReminder.job.js';
 import { runTokenCleanupJob } from './tokenCleanup.job.js';
 import { runViewsRetentionJob } from './viewsRetention.job.js';
 import { runRatingResyncJob } from './ratingResync.job.js';
+import { startNotificationWorker, stopNotificationWorker } from '../modules/notifications/notification.worker.js';
 
 const KOLKATA_TIMEZONE = 'Asia/Kolkata';
 
@@ -68,6 +69,7 @@ export function initCronJobs() {
   }
 
   logger.info({ totalScheduled: activeCronTasks.length }, 'All background cron jobs successfully initialized.');
+  startNotificationWorker();
   return activeCronTasks;
 }
 
@@ -75,6 +77,7 @@ export function initCronJobs() {
  * Stops all scheduled background cron jobs cleanly on server shutdown.
  */
 export function stopCronJobs() {
+  stopNotificationWorker();
   logger.info({ count: activeCronTasks.length }, 'Stopping active background cron tasks...');
   for (const item of activeCronTasks) {
     try {

@@ -1,5 +1,6 @@
 import { getPool } from '../../config/db.js';
 import { recordAuditLog } from '../../utils/auditLogger.js';
+import { emitNotificationEvent } from '../notifications/notification.events.js';
 import {
   findCourseForEnrollment,
   findBatchForEnrollment,
@@ -125,6 +126,17 @@ export async function selfEnrollStudent(courseId, { batch_id = null } = {}, user
     ip_address: ip,
   });
 
+  emitNotificationEvent('course_booking_created', {
+    booking_id: enrollmentId,
+    course_id: course.id,
+    user_id: user.id,
+    student_name: user.name,
+    email: user.email,
+    phone: user.phone,
+    course_name: course.course_name,
+    batch_name: batch_id ? `Batch #${batch_id}` : null,
+  }).catch(err => console.error('[Notification Event Error] course_booking_created:', err.message));
+
   return {
     enrollment_id: enrollmentId,
     course_id: course.id,
@@ -197,12 +209,13 @@ export async function createAdminEnrollment(data, user, ip) {
 
   // 1. Verify target user exists and is not deleted
   const [userRows] = await pool.query(
-    'SELECT id, name, email, status FROM users WHERE id = ? AND deleted_at IS NULL',
+    'SELECT id, name, email, phone, status FROM users WHERE id = ? AND deleted_at IS NULL',
     [data.user_id]
   );
   if (userRows.length === 0) {
     throw new EnrollmentServiceError('User not found', 404);
   }
+  const studentUser = userRows[0];
 
   // 2. Verify course exists and not deleted
   const course = await findCourseForEnrollment(data.course_id);
@@ -265,6 +278,18 @@ export async function createAdminEnrollment(data, user, ip) {
     ip_address: ip,
   });
 
+  // Emit notification using authoritative student details resolved from database
+  await emitNotificationEvent('course_booking_created', {
+    booking_id: enrollmentId,
+    course_id: data.course_id,
+    user_id: data.user_id,
+    student_name: studentUser.name || `Student #${data.user_id}`,
+    email: studentUser.email || null,
+    phone: studentUser.phone || null,
+    course_name: course.course_name,
+    batch_name: data.batch_id ? `Batch #${data.batch_id}` : null,
+  }).catch(err => console.error('[Notification Event Error] course_booking_created (admin):', err.message));
+
   return findEnrollmentById(enrollmentId);
 }
 
@@ -296,6 +321,26 @@ export async function updateAdminEnrollment(id, updates, user, ip) {
     new_value: updates,
     ip_address: ip,
   });
+
+  const isCancelled = updates.enrollment_status === 'cancelled' || updates.status === 'cancelled';
+  const wasCancelled = current.enrollment_status === 'cancelled';
+  if (isCancelled && !wasCancelled) {
+    // Resolve authoritative student details from database for notification delivery
+    const pool = getPool();
+    const [userRows] = await pool.query('SELECT id, name, email, phone FROM users WHERE id = ?', [current.user_id]);
+    const studentUser = userRows[0] || {};
+
+    await emitNotificationEvent('course_booking_cancelled', {
+      booking_id: id,
+      course_id: current.course_id,
+      user_id: current.user_id,
+      student_name: studentUser.name || current.user_name || 'Learner',
+      email: studentUser.email || current.user_email || null,
+      phone: studentUser.phone || null,
+      course_name: current.course_name,
+      reason: updates.notes || 'Cancelled by administrator',
+    }).catch(err => console.error('[Notification Event Error] course_booking_cancelled:', err.message));
+  }
 
   return updated;
 }

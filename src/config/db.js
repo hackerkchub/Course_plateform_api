@@ -8,6 +8,7 @@ let isMockMode = false;
 export const ALLOWED_PRODUCTION_DATABASES = Object.freeze([
   'course_platform_db',
   'softmaxs_course_platform_db',
+  'g9expert_course_plateform_db',
 ]);
 
 /**

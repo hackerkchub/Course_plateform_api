@@ -1,4 +1,5 @@
 import { recordAuditLog } from '../../utils/auditLogger.js';
+import { emitNotificationEvent } from '../notifications/notification.events.js';
 import {
   findCourseById,
   findDemoSettingsByCourseId,
@@ -120,6 +121,13 @@ export async function submitDemoRequest(courseId, data, user, ip) {
     throw new DemoServiceError('We are not currently accepting demo requests for this course', 400);
   }
 
+  // 3b. Allowed demo types check
+  if (settings.allowed_demo_types && Array.isArray(settings.allowed_demo_types) && settings.allowed_demo_types.length > 0) {
+    if (!settings.allowed_demo_types.includes(data.preferred_demo_type)) {
+      throw new DemoServiceError(`The demo type '${data.preferred_demo_type}' is not supported for this course`, 400);
+    }
+  }
+
   // 4. Request date range check
   const now = new Date();
   if (settings.request_start_at && now < new Date(settings.request_start_at)) {
@@ -196,6 +204,38 @@ export async function submitDemoRequest(courseId, data, user, ip) {
       },
     });
 
+    const isLiveBooking = data.preferred_demo_type === 'live' && Boolean(data.preferred_date);
+    const resolvedUserId = (user && user.email === data.email) ? user.id : null;
+
+    if (isLiveBooking) {
+      await emitNotificationEvent('demo_booking_created', {
+        demo_id: result.id,
+        course_id: Number(courseId),
+        user_id: resolvedUserId,
+        student_name: data.student_name,
+        student_email: data.email,
+        student_phone: data.phone,
+        demo_date: data.preferred_date || data.demo_date,
+        demo_time: data.preferred_time || data.demo_time || 'TBD',
+        course_name: course.course_name,
+      }).catch(err => console.error('[Notification Event Error] demo_booking_created:', err.message));
+    } else {
+      await emitNotificationEvent('course_inquiry_received', {
+        inquiry_id: result.id,
+        event_id: result.id,
+        course_id: Number(courseId),
+        user_id: resolvedUserId,
+        name: data.student_name,
+        student_name: data.student_name,
+        email: data.email,
+        student_email: data.email,
+        phone: data.phone,
+        student_phone: data.phone,
+        course_name: course.course_name,
+        message: data.message || 'Course inquiry / recorded demo interest',
+      }).catch(err => console.error('[Notification Event Error] course_inquiry_received:', err.message));
+    }
+
     return result;
   } catch (err) {
     if (err.statusCode) {
@@ -235,6 +275,17 @@ export async function cancelStudentDemoRequest(userId, requestId) {
     note: 'Cancelled by student',
     performedBy: userId,
   });
+
+  emitNotificationEvent('demo_booking_cancelled', {
+    demo_id: requestId,
+    course_id: request.course_id,
+    user_id: userId,
+    student_name: request.student_name,
+    student_email: request.student_email || request.email,
+    student_phone: request.student_phone || request.phone,
+    course_name: request.course_name,
+    reason: 'Cancelled by student',
+  }).catch(err => console.error('[Notification Event Error] demo_booking_cancelled:', err.message));
 
   return true;
 }
@@ -313,6 +364,31 @@ export async function updateAdminDemoRequest(requestId, data, user, ip) {
     new_value: updated,
     ip_address: ip,
   });
+
+  if (updated.status === 'cancelled' && current.status !== 'cancelled') {
+    emitNotificationEvent('demo_booking_cancelled', {
+      demo_id: requestId,
+      course_id: current.course_id,
+      user_id: current.user_id,
+      student_name: current.student_name,
+      student_email: current.student_email || current.email,
+      student_phone: current.student_phone || current.phone,
+      course_name: current.course_name,
+      reason: data.admin_notes || 'Cancelled by administrator',
+    }).catch(err => console.error('[Notification Event Error] demo_booking_cancelled:', err.message));
+  } else if (data.scheduled_at && data.scheduled_at !== current.scheduled_at) {
+    emitNotificationEvent('demo_booking_rescheduled', {
+      demo_id: requestId,
+      course_id: current.course_id,
+      user_id: current.user_id,
+      student_name: current.student_name,
+      student_email: current.student_email || current.email,
+      student_phone: current.student_phone || current.phone,
+      course_name: current.course_name,
+      demo_date: data.scheduled_at,
+      demo_time: data.scheduled_at,
+    }).catch(err => console.error('[Notification Event Error] demo_booking_rescheduled:', err.message));
+  }
 
   return updated;
 }

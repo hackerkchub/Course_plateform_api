@@ -4,15 +4,16 @@ on:
   push:
     branches:
       - main
+      - production
   workflow_dispatch:
 
 concurrency:
-  group: course-platform-backend-deploy
+  group: course-platform-backend-deploy-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: Sync Backend via FTP/FTPS
+  deploy-testing:
+    name: Sync Backend to Testing Server (FTP/FTPS)
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -22,6 +23,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+
+      - name: Create LiteSpeed / Passenger Restart Marker
+        run: |
+          mkdir -p tmp
+          echo "deploy-${{ github.sha }}-$(date +%s)" > tmp/restart.txt
 
       - name: Sync Backend Files via FTPS
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
@@ -75,3 +81,68 @@ jobs:
             **/*.tmp
             **/*.temp
 
+  deploy-production:
+    name: Deploy Backend to Guidexa Production (Plain FTP)
+    if: github.ref == 'refs/heads/production'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Create LiteSpeed / Passenger Restart Marker
+        run: |
+          mkdir -p tmp
+          echo "deploy-${{ github.sha }}-$(date +%s)" > tmp/restart.txt
+
+      - name: Sync Backend Files via Plain FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          # Production server host or IP
+          server: ${{ secrets.PROD_FTP_SERVER || secrets.FTP_SERVER }}
+          
+          # Dedicated production FTP username
+          username: ${{ secrets.PROD_FTP_USERNAME || secrets.FTP_USERNAME }}
+          
+          # Dedicated production FTP password
+          password: ${{ secrets.PROD_FTP_PASSWORD || secrets.FTP_PASSWORD }}
+          
+          # Protocol strictly plain FTP (No FTPS / SFTP)
+          protocol: ftp
+          
+          # Port strictly 21
+          port: 21
+          
+          # Local directory to sync (repository root)
+          local-dir: ./
+          
+          # Dedicated production destination directory (must be configured in secrets without fallback to ./)
+          server-dir: ${{ secrets.FTP_PROD_SERVER_DIR || secrets.PROD_FTP_SERVER_DIR }}
+          
+          # Safety: Never delete existing unmanaged files on the remote production server
+          dangerous-clean-slate: false
+          
+          # File and directory exclusions:
+          # Protects secrets, production uploads, runtime logs, cPanel .htaccess, and dev artifacts
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/.github/**
+            **/node_modules/**
+            **/.env
+            **/.env*
+            **/.env.*
+            **/.htaccess
+            uploads/**
+            logs/**
+            coverage/**
+            scratch/**
+            tests/**
+            **/*.log
+            **/.DS_Store
+            **/powershell.cmd
+            **/*.tmp
+            **/*.temp

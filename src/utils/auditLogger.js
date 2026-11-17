@@ -14,6 +14,7 @@ import logger from '../config/logger.js';
  * @param {object|null} [param0.old_value] - Previous state before modification
  * @param {object|null} [param0.new_value] - New state after modification
  * @param {string|null} [param0.ip_address] - Client IP address
+ * @param {object|null} [param0.connection] - Optional active database transaction connection
  * @returns {Promise<number|null>} Inserted audit log ID
  */
 export async function createAuditLog({
@@ -24,14 +25,15 @@ export async function createAuditLog({
   old_value = null,
   new_value = null,
   ip_address = null,
+  connection = null,
 }) {
   try {
-    const pool = getPool();
+    const db = connection || getPool();
     const oldJson = old_value !== null ? JSON.stringify(old_value) : null;
     const newJson = new_value !== null ? JSON.stringify(new_value) : null;
     const safeEntityId = (entity_id !== null && entity_id !== undefined) ? Number(entity_id) : 0;
 
-    const [result] = await pool.query(
+    const [result] = await db.query(
       `INSERT INTO audit_logs (actor_id, action, entity_type, entity_id, old_value, new_value, ip_address)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [actor_id, action, entity_type, safeEntityId, oldJson, newJson, ip_address]
